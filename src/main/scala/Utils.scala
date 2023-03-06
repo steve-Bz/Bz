@@ -110,7 +110,7 @@ object Utils {
 
     def tsvSourceMapper[T](fileName: String, mapper: Map[String, String] => Option[T]): Source[T, Future[IOResult]] =
 
-      tsvSource(getClass.getResource(fileName).getFile)
+      tsvSource( getClass.getResource(fileName).getFile)
         .map(mapper)
         .filter(_.nonEmpty)
         .map(_.get)

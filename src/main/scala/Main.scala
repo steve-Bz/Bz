@@ -20,7 +20,7 @@ object Main extends App {
     MovieServiceImplA.principalsForMovieName("Blacksmith Scene")
 
     //Implement B
-    MovieServiceImplB.principalsForMovieName("Blacksmith Scene")
+    //MovieServiceImplB.principalsForMovieName("Blacksmith Scene")
       .runForeach(println)
       .onComplete(_ => system.terminate())
   }
