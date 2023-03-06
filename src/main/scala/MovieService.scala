@@ -13,7 +13,6 @@ import scala.concurrent.Future
 
 
 object MovieService {
-  implicit
   private val titleBasicFile = "files/title.basics.tsv"
   private val titlePrincipalFile = "files/title.principals.tsv"
   private val nameBasicFile = "files/name.basics.tsv"
