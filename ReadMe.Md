@@ -1,6 +1,3 @@
 SB
  
-- Running assume files are located in src/main/ressources
-
-- Testi = For Testing Run the main
-- 
+Running assume All the files are in ressource of the project 
