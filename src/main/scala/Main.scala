@@ -1,20 +1,33 @@
 
 import Main.system.dispatcher
-import MovieService.MovieService
+import MovieService.{MovieServiceImplA, MovieServiceImplB, sortingSink}
+import MovieService.MovieServiceImplA.tvSeriesWithGreatestNumberOfEpisodes
 import akka.actor.ActorSystem
-import akka.stream.scaladsl.Source
 
 
-
-object Main extends App with MovieService  {
+object Main extends App {
 
   implicit val system: ActorSystem = ActorSystem("MediaHub")
 
-  val movieaName = "Blacksmith Scene"
-    principalsForMovieName("Blacksmith Scene")
+  def runPrincipalsForMovieName(): Unit = {
+
+    //Some movie names
+    //Surviving the Social
+    //Blood Money	Blood Money
+
+    MovieServiceImplA.principalsForMovieName("Blacksmith Scene")
       .runForeach(println)
       .onComplete(_ => system.terminate())
+  }
 
-  override def tvSeriesWithGreatestNumberOfEpisodes(): Source[MovieService.TvSerie, _] = ???
+  private def runTvSeriesWithGreatestNumberOfEpisodes(): Unit = {
+    MovieServiceImplB.tvSeriesWithGreatestNumberOfEpisodes()
+      .runForeach(println)
+      .onComplete(_ => system.terminate())
 }
-˚
+
+
+ runPrincipalsForMovieName();
+//runTvSeriesWithGreatestNumberOfEpisodes()
+
+}
