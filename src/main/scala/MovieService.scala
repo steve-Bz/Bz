@@ -14,10 +14,10 @@ import scala.concurrent.Future
 
 object MovieService {
   implicit
-  private val titleBasicFile = "title.basics.tsv"
-  private val titlePrincipalFile = "title.principals.tsv"
-  private val nameBasicFile = "name.basics.tsv"
-  private val titleEpisodeFile = "title.episode.tsv"
+  private val titleBasicFile = "files/title.basics.tsv"
+  private val titlePrincipalFile = "files/title.principals.tsv"
+  private val nameBasicFile = "files/name.basics.tsv"
+  private val titleEpisodeFile = "files/title.episode.tsv"
 
 
   final case class Principal(name: String, birthYear: Int, deathYear: Option[Int] = None, profession: List[String] = Nil)
