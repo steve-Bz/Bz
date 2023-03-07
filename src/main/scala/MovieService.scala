@@ -69,9 +69,14 @@ object MovieService {
           .filter(nb => nb.nconst == nConst))
         .toMat(Sink.asPublisher[NameBasic](fanout = true))(Keep.right)
 
-
     Flow[String].async("", 32)
       .flatMapConcat(nConst => Source.fromPublisher(filter(nConst).run()))
+      .log(name = "LooKing up for Principals")
+      .addAttributes(
+        Attributes.logLevels(
+          onElement = Attributes.LogLevels.Info,
+          onFinish = Attributes.LogLevels.Info,
+          onFailure = Attributes.LogLevels.Error))
   }
 
   /**
@@ -102,7 +107,12 @@ object MovieService {
     })
     .takeWhile(tb => tb.isDefined)
     .map(tp => tp.get)
-    .take(1)
+    .log(name = "Folding Titles")
+    .addAttributes(
+      Attributes.logLevels(
+        onElement = Attributes.LogLevels.Info,
+        onFinish = Attributes.LogLevels.Info,
+        onFailure = Attributes.LogLevels.Error))
 
 
   val tvSeriesSortingSink: Sink[(Int, TitleBasic), Future[Seq[TvSerie]]] = Flow[(Int, TitleBasic)]
@@ -111,6 +121,7 @@ object MovieService {
       .map(seq => seq
         .sortWith((l, r) => l._1 < r._1)
         .map(tb => toTvSerie(tb._2, tb._1))))
+
 
   private val countingEpisodeFlow: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
 
