@@ -4,7 +4,7 @@ import Utils.Conversions.{toNameBasic, toPrincipal, toTitleBasic, toTitleEpisode
 import Utils.Operators.tsvSourceMapper
 import akka.NotUsed
 import akka.stream._
-import akka.stream.scaladsl.GraphDSL.Implicits.port2flow
+import akka.stream.scaladsl.GraphDSL.Implicits.{SourceArrow, flow2flow, port2flow}
 import akka.stream.scaladsl.{Balance, Flow, GraphDSL, Keep, Merge, RunnableGraph, Sink, Source}
 import org.reactivestreams.Publisher
 
@@ -100,19 +100,56 @@ object MovieService {
   }
 
 
-  private val titleBasicsFoldingFlow: Flow[(Int, TitleBasic), (Int, TitleBasic), NotUsed] = Flow[(Int, TitleBasic)]
-    .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
-      case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
-      case None => Some(elem._1, elem._2)
+  private val countAndFold: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
+    val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
+      (titleBasic: TitleBasic) => Flow[TitleEpisode]
+        .filter(te => te.parentTconst == titleBasic.tconst)
+        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
+        .map(tbC => tbC._2)
+        .groupBy(32, in => in._2.tconst)
+        .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
+          case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
+          case None => Some(elem._1, elem._2)
+        })
+        .takeWhile(tb => tb.isDefined)
+        .map(tp => tp.get)
+        .mergeSubstreams
+        .log(name = "Count and fold Titles")
+        .addAttributes(
+          Attributes.logLevels(
+            onElement = Attributes.LogLevels.Info,
+            onFinish = Attributes.LogLevels.Info,
+            onFailure = Attributes.LogLevels.Error))
+
+    val countintDisplatcher: Flow[TitleBasic, (Int, TitleBasic), NotUsed]
+    = Flow.fromGraph(GraphDSL.create() { implicit builder =>
+      val dispatch = builder.add(Balance[TitleBasic](10))
+      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](10))
+      for (i <- 0 to 9) {
+        dispatch.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
+      }
+      FlowShape(dispatch.in, mergePrincipals.out)
     })
-    .takeWhile(tb => tb.isDefined)
-    .map(tp => tp.get)
-    .log(name = "Folding Titles")
-    .addAttributes(
-      Attributes.logLevels(
-        onElement = Attributes.LogLevels.Info,
-        onFinish = Attributes.LogLevels.Info,
-        onFailure = Attributes.LogLevels.Error))
+    countintDisplatcher
+  }
+  private val titleBasicsFoldingFlow: Flow[(Int, TitleBasic), (Int, TitleBasic), NotUsed] = {
+
+    Flow[(Int, TitleBasic)].groupBy(32, in => in._2.tconst)
+      .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
+        case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
+        case None => Some(elem._1, elem._2)
+      })
+      .takeWhile(tb => tb.isDefined)
+      .map(tp => tp.get)
+      .mergeSubstreams
+      .log(name = "Folding Titles")
+      .addAttributes(
+        Attributes.logLevels(
+          onElement = Attributes.LogLevels.Info,
+          onFinish = Attributes.LogLevels.Info,
+          onFailure = Attributes.LogLevels.Error))
+
+  }
 
 
   val tvSeriesSortingSink: Sink[(Int, TitleBasic), Future[Seq[TvSerie]]] = Flow[(Int, TitleBasic)]
@@ -125,21 +162,32 @@ object MovieService {
 
   private val countingEpisodeFlow: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
 
-    val counterSink: TitleBasic => Sink[TitleEpisode, Future[Seq[(Int, TitleBasic)]]] =
+    val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
       (titleBasic: TitleBasic) => Flow[TitleEpisode]
         .filter(te => te.parentTconst == titleBasic.tconst)
         .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
         .map(tbC => tbC._2)
-        .toMat(Sink.seq[(Int, TitleBasic)])(Keep.right)
+        //     .toMat(Sink.seq[(Int, TitleBasic)])(Keep.right)
 
-    Flow[TitleBasic]
-      .mapAsyncUnordered(10)(titleBasic =>
-        titleEpisodesSource.runWith(counterSink(titleBasic)))
-      .mapConcat(s => s)
-      .log("Counting Episodes")
-      .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info,
-        onFinish = Attributes.LogLevels.Info,
-        onFailure = Attributes.LogLevels.Error))
+        /* Flow[TitleBasic].groupBy()
+           .mapAsyncUnordered(10)(titleBasic => Future(titleEpisodesSource.via(titleEpisodeCountingFlow(titleBasic))))
+           .mergeAll()*/
+
+
+        .log("Counting Episodes")
+        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info,
+          onFinish = Attributes.LogLevels.Info,
+          onFailure = Attributes.LogLevels.Error))
+    val countintDisplatcher: Flow[TitleBasic, (Int, TitleBasic), NotUsed]
+    = Flow.fromGraph(GraphDSL.create() { implicit builder =>
+      val dispatch = builder.add(Balance[TitleBasic](10))
+      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](10))
+      for (i <- 0 to 9) {
+        dispatch.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
+      }
+      FlowShape(dispatch.in, mergePrincipals.out)
+    })
+    countintDisplatcher
   }
 
   object MovieServiceWithGraphComposition extends MovieService {
@@ -158,9 +206,9 @@ object MovieService {
     })
 
     private val seriesWithGreatestNumberOfEpisodes: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
-      val dispatch = builder.add(Balance[TitleBasic](10))
-      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](10))
-      for (i <- 0 to 9) {
+      val dispatch = builder.add(Balance[TitleBasic](100))
+      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](100))
+      for (i <- 0 to 99) {
         dispatch.out(i) ~> tvSeriesFlow.async ~> countingEpisodeFlow.async ~> titleBasicsFoldingFlow.async ~> mergePrincipals.in(i)
       }
       FlowShape(dispatch.in, mergePrincipals.out)
@@ -176,8 +224,14 @@ object MovieService {
 
       Source.future(
         titleBasicSource
+          .async("", 32)
           .via(tvSeriesFlow)
+          .async("", 32)
+          .via(countAndFold)
+          /*.async("", 32)
           .via(seriesWithGreatestNumberOfEpisodes)
+          .toCompletionStage()
+          .async("", 32)*/
           .runWith(tvSeriesSortingSink))
         .mapConcat(s => s)
     }
@@ -196,14 +250,21 @@ object MovieService {
         .map(toPrincipal)
     }
 
+    def ma = {
+      titleBasicSource.via(tvSeriesFlow).toCompletionStage()
+    }
+
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
       titleBasicSource
         .via(tvSeriesFlow)
         .via(countingEpisodeFlow)
+        .toCompletionStage()
         .via(titleBasicsFoldingFlow)
         .runWith(tvSeriesSortingSink))
       .mapConcat(seq => seq)
+
   }
+
 }
 
 
