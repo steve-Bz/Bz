@@ -9,26 +9,27 @@ object Main extends App {
 
   implicit val system: ActorSystem = ActorSystem("MediaHub")
 
-  def runPrincipalsForMovieName(): Unit = {
+  private def runPrincipalsForMovieName(): Unit = {
 
     //Testing Some MovieNames
     //Some movie names
     //Surviving the Social
     //Blood Money	Blood Money
 
-    MovieServiceWithGraphComposition.principalsForMovieName("Blacksmith Scene")
+    //MovieServiceWithGraphComposition.principalsForMovieName("Blacksmith Scene")
+    MovieServiceImpl.principalsForMovieName("Blacksmith Scene")
       .runForeach(println)
       .onComplete(_ => system.terminate())
   }
 
   private def runTvSeriesWithGreatestNumberOfEpisodes(): Unit = {
-   // MovieServiceImpl.tvSeriesWithGreatestNumberOfEpisodes()
-    MovieServiceWithGraphComposition.tvSeriesWithGreatestNumberOfEpisodes()
+    MovieServiceImpl.tvSeriesWithGreatestNumberOfEpisodes()
+    //MovieServiceWithGraphComposition.tvSeriesWithGreatestNumberOfEpisodes()
       .runForeach(println)
       .onComplete(_ => system.terminate())
   }
 
-  //runPrincipalsForMovieName();
-  runTvSeriesWithGreatestNumberOfEpisodes()
+  runPrincipalsForMovieName();
+  //runTvSeriesWithGreatestNumberOfEpisodes()
 
 }
