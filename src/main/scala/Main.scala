@@ -17,7 +17,7 @@ object Main extends App {
     //Blood Money	Blood Money
     val movieName ="Blacksmith Scene"
 
-    MovieServiceImpl2.principalsForMovieName(movieName)
+    MovieServiceImpl1.principalsForMovieName(movieName)
       .runForeach(println)
       .onComplete(_ => system.terminate())
   }

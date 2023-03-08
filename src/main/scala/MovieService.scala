@@ -38,12 +38,6 @@ object MovieService {
   private val nameBasicSource: Source[NameBasic, Future[IOResult]] = tsvSourceMapper(nameBasicFile, toNameBasic)
   private val titleEpisodesSource: Source[TitleEpisode, Future[IOResult]] = tsvSourceMapper(titleEpisodeFile, toTitleEpisode)
 
-  //Config val
-
-  private val inputBufferSize = 16
-
-  private val maxParallelPort = 16
-
   trait MovieService {
     def principalsForMovieName(movieName: String): Source[Principal, _]
 
@@ -51,48 +45,35 @@ object MovieService {
 
   }
 
+  //Config val
+
+  private val maxParallelPort = 16
+
+
   //From an upstream of title principals ids down stream name basic ids
   private val titlePrincipals: Flow[String, String, NotUsed] = {
-    val fileter: String => RunnableGraph[Publisher[String]] =
-      (tConst: String) => titlePrincipalSource
-        .via(Flow[TitlePrincipal]
-          .filter(tp => tp.tconst == tConst))
-        .map(tp => tp.nconst)
-        .toMat(Sink.asPublisher[String](fanout = true))(Keep.right)
+    Flow[String].flatMapConcat(tConst => titlePrincipalSource
+      .filter(tp => tp.tconst == tConst)
+      .map(tp => tp.nconst))
+  }
 
-    Flow[String].async("", inputBufferSize)
-      .flatMapConcat(s => Source.fromPublisher(fileter(s).run()))
+  // From an upstream of original movie name downstream title ids
+  private val titleByOriginalName: Flow[String, String, NotUsed] = {
+    Flow[String].flatMapConcat(originalName => titleBasicSource
+      .filter(tb => tb.originalTitle.contains(originalName))
+      .map(tb => tb.tconst))
   }
 
   //For an upstream of name basic ids look up for principals
   private val principals: Flow[String, Principal, NotUsed] = {
-    val filter: String => RunnableGraph[Publisher[Principal]] = (nConst: String) =>
-      nameBasicSource
-        .via(Flow[NameBasic]
-          .filter(nb => nb.nconst == nConst))
-        .map(toPrincipal)
-        .toMat(Sink.asPublisher[Principal](fanout = true))(Keep.right)
-
-    Flow[String].async("", inputBufferSize)
-      .flatMapConcat(nConst => Source.fromPublisher(filter(nConst).run()))
+    Flow[String].flatMapConcat(nConst => nameBasicSource
+      .filter(nb => nb.nconst == nConst)
+      .map(toPrincipal))
   }
-
 
   //  Filter the Titles in order to pick series only
   private val tvSeriesFlow: Flow[TitleBasic, TitleBasic, NotUsed] =
     Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
-
-  // From an upstream of original movie name downstream title ids
-  private val titleByOriginalName: Flow[String, String, NotUsed] = {
-    val filter = (originalName: String) => titleBasicSource
-      .via(Flow[TitleBasic]
-        .filter(tb => tb.originalTitle.contains(originalName)))
-      .map(tb => tb.tconst)
-      .toMat(Sink.asPublisher[String](fanout = true))(Keep.right)
-
-    Flow[String].async("", inputBufferSize)
-      .flatMapConcat(s => Source.fromPublisher(filter(s).run()))
-  }
 
 
   private val countAndFold: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
@@ -146,7 +127,6 @@ object MovieService {
         .via(titlePrincipals)
         .async
         .via(principals)
-
     }
 
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
