@@ -71,12 +71,6 @@ object MovieService {
 
     Flow[String].async("", 32)
       .flatMapConcat(nConst => Source.fromPublisher(filter(nConst).run()))
-      .log(name = "LooKing up for Principals")
-      .addAttributes(
-        Attributes.logLevels(
-          onElement = Attributes.LogLevels.Info,
-          onFinish = Attributes.LogLevels.Info,
-          onFailure = Attributes.LogLevels.Error))
   }
 
   /**
@@ -200,7 +194,7 @@ object MovieService {
       val dispatch = builder.add(Balance[String](10))
       val mergePrincipals = builder.add(Merge[Principal](10))
       for (i <- 0 to 9) {
-        dispatch.out(i) ~> lookUpForTitleId.async ~> Flow[TitleBasic].map(tb => tb.tconst) ~> lookUpForTitlePrincipal.async ~> Flow[TitlePrincipal].map(tp => tp.nconst).async ~> lookUpForPrincipals.async ~> Flow[NameBasic].map(toPrincipal) ~> mergePrincipals.in(i)
+        dispatch.out(i) ~> lookUpForTitleId.async ~> Flow[TitleBasic].map(tb => tb.tconst).async ~> lookUpForTitlePrincipal.async ~> Flow[TitlePrincipal].map(tp => tp.nconst).async ~> lookUpForPrincipals.async ~> Flow[NameBasic].map(toPrincipal) ~> mergePrincipals.in(i)
       }
       FlowShape(dispatch.in, mergePrincipals.out)
     })
