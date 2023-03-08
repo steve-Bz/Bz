@@ -43,11 +43,6 @@ object MovieService {
 
   }
 
-  //Config val
-
-  private val maxParallelPort = 10
-
-
   //From an upstream of title principals ids down stream name basic ids
   private val titlePrincipals: Flow[String, String, NotUsed] = {
     Flow[String].flatMapConcat(tConst => titlePrincipalSource
@@ -139,26 +134,23 @@ object MovieService {
 
   object MovieServiceImpl2 extends MovieService {
 
-    /*
-       A Flow  that that multiplex the search of principal across multiple element
-    Testing composing  streams
-     */
+    // USING PIPELINING
     private val principalsForMovieGraph: Flow[String, Principal, NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
-      val dispatch = builder.add(Balance[String](maxParallelPort))
-      val mergePrincipals = builder.add(Merge[Principal](maxParallelPort))
-      for (i <- 0 until maxParallelPort) {
+      val portNumber = 10
+      val dispatch = builder.add(Balance[String](portNumber))
+      val mergePrincipals = builder.add(Merge[Principal](portNumber))
+      for (i <- 0 until portNumber) {
         dispatch.out(i) ~> titleByOriginalName.async ~> titlePrincipals.async ~> principals.async ~> mergePrincipals.in(i)
       }
       FlowShape(dispatch.in, mergePrincipals.out)
     })
 
     private val seriesWithGreatestNumberOfEpisodes: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
+      val portNumber = 10
+      val dispatch = builder.add(Balance[TitleBasic](portNumber))
+      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](portNumber))
 
-      val dispatch = builder.add(Balance[TitleBasic](maxParallelPort))
-
-      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](maxParallelPort))
-
-      for (i <- 0 until maxParallelPort) {
+      for (i <- 0 until portNumber) {
         dispatch.out(i) ~> tvSeriesFlow.async ~> countAndFold.async ~> mergePrincipals.in(i)
       }
 

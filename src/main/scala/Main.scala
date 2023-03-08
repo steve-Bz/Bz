@@ -27,7 +27,7 @@ object Main extends App {
       .onComplete(_ => system.terminate())
   }
 
-   //runPrincipalsForMovieName();
-   runTvSeriesWithGreatestNumberOfEpisodes()
+   runPrincipalsForMovieName();
+  // runTvSeriesWithGreatestNumberOfEpisodes()
 
 }
