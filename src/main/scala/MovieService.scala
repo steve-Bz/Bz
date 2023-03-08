@@ -168,6 +168,7 @@ object MovieService {
       Source.future(
         titleBasicSource
           .via(seriesWithGreatestNumberOfEpisodes)
+          .async
           .runWith(sortedTvSeries))
         .mapConcat(s => s)
     }

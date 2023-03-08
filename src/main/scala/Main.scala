@@ -1,6 +1,6 @@
 
 import Main.system.dispatcher
-import MovieService.MovieServiceImpl1
+import MovieService.{MovieServiceImpl1, MovieServiceImpl2}
 import akka.actor.ActorSystem
 
 
@@ -27,7 +27,7 @@ object Main extends App {
       .onComplete(_ => system.terminate())
   }
 
-   runPrincipalsForMovieName();
-  // runTvSeriesWithGreatestNumberOfEpisodes()
+  // runPrincipalsForMovieName();
+     runTvSeriesWithGreatestNumberOfEpisodes()
 
 }
