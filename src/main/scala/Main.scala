@@ -1,7 +1,6 @@
 
 import Main.system.dispatcher
-import MovieService.{MovieServiceImpl1, MovieServiceImpl2, titleBasicSource, tvSeriesSortingSink}
-import MovieService.MovieServiceImpl1.tvSeriesWithGreatestNumberOfEpisodes
+import MovieService.MovieServiceImpl1
 import akka.actor.ActorSystem
 
 

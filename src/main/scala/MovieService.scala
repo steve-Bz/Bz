@@ -1,13 +1,11 @@
 import Main.system
 import Main.system.dispatcher
-import MovieService.TitleBasic
 import Utils.Conversions.{toNameBasic, toPrincipal, toTitleBasic, toTitleEpisode, toTitlePrincipal, toTvSerie}
 import Utils.Operators.tsvSourceMapper
 import akka.NotUsed
 import akka.stream._
 import akka.stream.scaladsl.GraphDSL.Implicits.port2flow
-import akka.stream.scaladsl.{Balance, Flow, GraphDSL, Keep, Merge, RunnableGraph, Sink, Source}
-import org.reactivestreams.Publisher
+import akka.stream.scaladsl.{Balance, Flow, GraphDSL, Keep, Merge, Sink, Source}
 
 import scala.concurrent.Future
 
@@ -83,7 +81,7 @@ object MovieService {
     val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
       (titleBasic: TitleBasic) => Flow[TitleEpisode]
         .filter(te => te.parentTconst == titleBasic.tconst)
-        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), s => None)
+        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
         .map(tbC => tbC._2)
         .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
           case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
@@ -106,12 +104,16 @@ object MovieService {
     })
   }
 
-  val tvSeriesSortingSink: Sink[(Int, TitleBasic), Future[Seq[TvSerie]]] = Flow[(Int, TitleBasic)]
-    .toMat(Sink.takeLast[(Int, TitleBasic)](10))(Keep.right)
-    .mapMaterializedValue(fs => fs
-      .map(seq => seq
-        .sortWith((l, r) => l._1 < r._1)
-        .map(tb => toTvSerie(tb._2, tb._1))))
+  private val sortedTvSeries: Sink[(Int, TitleBasic), Future[List[TvSerie]]] = Flow[(Int, TitleBasic)]
+    .fold(List.empty[(Int, TitleBasic)])((acc, elem) =>
+      if (acc.length < 10)
+        elem :: acc.sortWith((l, r) => l._1 > r._1).take(10)
+      else
+        acc)
+
+    .toMat(Sink.last[List[(Int, TitleBasic)]])(Keep.right)
+    .mapMaterializedValue(fs => fs.map(seq => seq
+      .map(tb => toTvSerie(tb._2, tb._1))))
 
 
   object MovieServiceImpl1 extends MovieService {
@@ -131,7 +133,7 @@ object MovieService {
         .via(tvSeriesFlow)
         .async
         .via(countAndFold)
-        .runWith(tvSeriesSortingSink))
+        .runWith(sortedTvSeries))
       .mapConcat(seq => seq)
   }
 
@@ -174,7 +176,7 @@ object MovieService {
       Source.future(
         titleBasicSource
           .via(seriesWithGreatestNumberOfEpisodes)
-          .runWith(tvSeriesSortingSink))
+          .runWith(sortedTvSeries))
         .mapConcat(s => s)
     }
   }
