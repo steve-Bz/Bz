@@ -40,9 +40,9 @@ object MovieService {
 
   //Config val
 
-  private val inputBufferSize = 64
+  private val inputBufferSize = 16
 
-  private val maxParallelPort = 100
+  private val maxParallelPort = 16
 
   trait MovieService {
     def principalsForMovieName(movieName: String): Source[Principal, _]
@@ -61,7 +61,7 @@ object MovieService {
           .filter(tp => tp.tconst == tConst))
         .toMat(Sink.asPublisher[TitlePrincipal](fanout = true))(Keep.right)
 
-    Flow[String].async("", 64)
+    Flow[String].async("", inputBufferSize)
       .flatMapConcat(s => Source.fromPublisher(fileter(s).run()))
   }
 
@@ -76,7 +76,7 @@ object MovieService {
           .filter(nb => nb.nconst == nConst))
         .toMat(Sink.asPublisher[NameBasic](fanout = true))(Keep.right)
 
-    Flow[String].async("", 64)
+    Flow[String].async("", inputBufferSize)
       .flatMapConcat(nConst => Source.fromPublisher(filter(nConst).run()))
   }
 
@@ -84,13 +84,12 @@ object MovieService {
    * Filter the Titles in order to pick series only
    */
   private val tvSeriesFlow: Flow[TitleBasic, TitleBasic, NotUsed] =
-    Flow[TitleBasic]
-      .filter(tb => tb.titleType.contains("tvSeries"))
+    Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
 
   /**
    * Looks for all the titles with a given title original name
    */
-  private val lookUpForTitleId: Flow[String, TitleBasic, NotUsed] = {
+  private val titleByOriginalName: Flow[String, TitleBasic, NotUsed] = {
     val filter = (originalName: String) => titleBasicSource
       .via(Flow[TitleBasic]
         .filter(tb => tb.originalTitle.contains(originalName)))
@@ -142,7 +141,33 @@ object MovieService {
         .map(tb => toTvSerie(tb._2, tb._1))))
 
 
-  object MovieServiceWithGraphComposition extends MovieService {
+
+  object MovieServiceImpl1 extends MovieService {
+
+
+    override def principalsForMovieName(movieName: String): Source[Principal, _] = {
+      Source.single(movieName)
+        .via(titleByOriginalName)
+        .map(tb => tb.tconst)
+        .via(lookUpForTitlePrincipal)
+        .async
+        .map(tp => tp.nconst)
+        .via(lookUpForPrincipals)
+        .async
+        .map(toPrincipal)
+    }
+
+    override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
+      titleBasicSource
+        .via(tvSeriesFlow)
+        .async
+        .via(countAndFold)
+        .async
+        .runWith(tvSeriesSortingSink))
+      .mapConcat(seq => seq)
+  }
+
+  object MovieServiceImpl2 extends MovieService {
 
     /*
        A Flow  that that multiplex the search of principal across multiple element
@@ -151,8 +176,8 @@ object MovieService {
     private val principalsForMovieGraph: Flow[String, Principal, NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
       val dispatch = builder.add(Balance[String](maxParallelPort))
       val mergePrincipals = builder.add(Merge[Principal](maxParallelPort))
-      for (i <- 0 to maxParallelPort) {
-        dispatch.out(i) ~> lookUpForTitleId.async ~> Flow[TitleBasic].map(tb => tb.tconst).async ~> lookUpForTitlePrincipal.async ~> Flow[TitlePrincipal].map(tp => tp.nconst).async ~> lookUpForPrincipals.async ~> Flow[NameBasic].map(toPrincipal) ~> mergePrincipals.in(i)
+      for (i <- 0 until maxParallelPort) {
+        dispatch.out(i) ~> titleByOriginalName.async ~> Flow[TitleBasic].map(tb => tb.tconst).async ~> lookUpForTitlePrincipal.async ~> Flow[TitlePrincipal].map(tp => tp.nconst).async ~> lookUpForPrincipals.async ~> Flow[NameBasic].map(toPrincipal) ~> mergePrincipals.in(i)
       }
       FlowShape(dispatch.in, mergePrincipals.out)
     })
@@ -180,36 +205,10 @@ object MovieService {
 
       Source.future(
         titleBasicSource
-          .async("", inputBufferSize)
-          .via(tvSeriesFlow)
-          .async("", inputBufferSize)
-          .via(countAndFold)
+          .via(seriesWithGreatestNumberOfEpisodes)
           .runWith(tvSeriesSortingSink))
         .mapConcat(s => s)
     }
-  }
-
-  object MovieServiceImpl extends MovieService {
-
-
-    override def principalsForMovieName(movieName: String): Source[Principal, _] = {
-      Source.single(movieName)
-        .via(lookUpForTitleId)
-        .map(tb => tb.tconst)
-        .via(lookUpForTitlePrincipal)
-        .async
-        .map(tp => tp.nconst)
-        .via(lookUpForPrincipals)
-        .async
-        .map(toPrincipal)
-    }
-
-    override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
-      titleBasicSource
-        .via(tvSeriesFlow)
-        .via(countAndFold)
-        .runWith(tvSeriesSortingSink))
-      .mapConcat(seq => seq)
   }
 }
 
