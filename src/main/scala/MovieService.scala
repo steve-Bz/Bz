@@ -72,7 +72,7 @@ object MovieService {
   // From an upstream  of series count all the episodes of a given title
   // downstream a pair of (number of episodes, title)
   // representing the number of episodes for each title
-  private val countAndFold: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
+  private val countNumberOfEpisodes: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
     val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
       (titleBasic: TitleBasic) => Flow[TitleEpisode]
         .filter(te => te.parentTconst == titleBasic.tconst)
@@ -102,10 +102,12 @@ object MovieService {
   private val sortedTvSeries: Sink[(Int, TitleBasic), Future[List[TvSerie]]] = Flow[(Int, TitleBasic)]
     .fold(List.empty[(Int, TitleBasic)])((acc, elem) =>
       if (acc.length < 10)
-        elem :: acc.sortWith((l, r) => l._1 > r._1).take(10)
+        elem :: acc.sortWith((l, r) => l._1 >= r._1).take(10)
       else
         acc)
 
+    .log(name = "Sorting titles..")
+    .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFinish = Attributes.LogLevels.Info, onFailure = Attributes.LogLevels.Error))
     .toMat(Sink.last[List[(Int, TitleBasic)]])(Keep.right)
     .mapMaterializedValue(fs => fs.map(seq => seq
       .map(tb => toTvSerie(tb._2, tb._1))))
@@ -126,12 +128,14 @@ object MovieService {
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
       titleBasicSource
         .via(tvSeriesFlow)
+        .take(10)   //if one want to test  on a smaller data set ie(looking the greatest number of episodes on the first 100 series in the data set)
         .async
-        .via(countAndFold)
+        .via(countNumberOfEpisodes)
         .runWith(sortedTvSeries))
       .mapConcat(seq => seq)
   }
 
+  //Playing with graphs experimental :)
   object MovieServiceImpl2 extends MovieService {
 
     // USING PIPELINING
@@ -151,7 +155,7 @@ object MovieService {
       val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](portNumber))
 
       for (i <- 0 until portNumber) {
-        dispatch.out(i) ~> tvSeriesFlow.async ~> countAndFold.async ~> mergePrincipals.in(i)
+        dispatch.out(i) ~> tvSeriesFlow.take(10).async ~> countNumberOfEpisodes.async ~> mergePrincipals.in(i)
       }
 
       FlowShape(dispatch.in, mergePrincipals.out)
@@ -168,7 +172,6 @@ object MovieService {
       Source.future(
         titleBasicSource
           .via(seriesWithGreatestNumberOfEpisodes)
-          .async
           .runWith(sortedTvSeries))
         .mapConcat(s => s)
     }
