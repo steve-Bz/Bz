@@ -129,11 +129,12 @@ object MovieService {
       titleBasicSource
         .via(tvSeriesFlow)
         //.take(10)   // if one wants to test a smaller data set
-                      // ie(looking the greatest number of episodes on the first 100 series in the data set)
+        // ie(looking the greatest number of episodes on the first 100 series in the data set)
         .async
         .via(countNumberOfEpisodes)
         .runWith(sortedTvSeries))
       .mapConcat(seq => seq)
+
   }
 
   //Playing with graphs experimental :)
