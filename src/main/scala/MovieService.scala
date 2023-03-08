@@ -51,49 +51,44 @@ object MovieService {
 
   }
 
-  /**
-   * Flow that looks up for names ids for its upstream and put them on downstream
-   */
-  private val lookUpForTitlePrincipal: Flow[String, TitlePrincipal, NotUsed] = {
-    val fileter: String => RunnableGraph[Publisher[TitlePrincipal]] =
+  //From an upstream of title principals ids down stream name basic ids
+  private val titlePrincipals: Flow[String, String, NotUsed] = {
+    val fileter: String => RunnableGraph[Publisher[String]] =
       (tConst: String) => titlePrincipalSource
         .via(Flow[TitlePrincipal]
           .filter(tp => tp.tconst == tConst))
-        .toMat(Sink.asPublisher[TitlePrincipal](fanout = true))(Keep.right)
+        .map(tp => tp.nconst)
+        .toMat(Sink.asPublisher[String](fanout = true))(Keep.right)
 
     Flow[String].async("", inputBufferSize)
       .flatMapConcat(s => Source.fromPublisher(fileter(s).run()))
   }
 
-
-  /**
-   * Flow that looks up for Name basis and map them to principal ids for its upstream Lookup for names ids
-   */
-  private val lookUpForPrincipals: Flow[String, NameBasic, NotUsed] = {
-    val filter: String => RunnableGraph[Publisher[NameBasic]] = (nConst: String) =>
+  //For an upstream of name basic ids look up for principals
+  private val principals: Flow[String, Principal, NotUsed] = {
+    val filter: String => RunnableGraph[Publisher[Principal]] = (nConst: String) =>
       nameBasicSource
         .via(Flow[NameBasic]
           .filter(nb => nb.nconst == nConst))
-        .toMat(Sink.asPublisher[NameBasic](fanout = true))(Keep.right)
+        .map(toPrincipal)
+        .toMat(Sink.asPublisher[Principal](fanout = true))(Keep.right)
 
     Flow[String].async("", inputBufferSize)
       .flatMapConcat(nConst => Source.fromPublisher(filter(nConst).run()))
   }
 
-  /**
-   * Filter the Titles in order to pick series only
-   */
+
+  //  Filter the Titles in order to pick series only
   private val tvSeriesFlow: Flow[TitleBasic, TitleBasic, NotUsed] =
     Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
 
-  /**
-   * Looks for all the titles with a given title original name
-   */
-  private val titleByOriginalName: Flow[String, TitleBasic, NotUsed] = {
+  // From an upstream of original movie name downstream title ids
+  private val titleByOriginalName: Flow[String, String, NotUsed] = {
     val filter = (originalName: String) => titleBasicSource
       .via(Flow[TitleBasic]
         .filter(tb => tb.originalTitle.contains(originalName)))
-      .toMat(Sink.asPublisher[TitleBasic](fanout = true))(Keep.right)
+      .map(tb => tb.tconst)
+      .toMat(Sink.asPublisher[String](fanout = true))(Keep.right)
 
     Flow[String].async("", inputBufferSize)
       .flatMapConcat(s => Source.fromPublisher(filter(s).run()))
@@ -112,7 +107,7 @@ object MovieService {
         })
         .takeWhile(tb => tb.isDefined)
         .map(tp => tp.get)
-        .log(name = "Count and fold Titles")
+        .log(name = "Counting episodes for each title")
         .addAttributes(
           Attributes.logLevels(
             onElement = Attributes.LogLevels.Info,
@@ -141,28 +136,23 @@ object MovieService {
         .map(tb => toTvSerie(tb._2, tb._1))))
 
 
-
   object MovieServiceImpl1 extends MovieService {
 
 
     override def principalsForMovieName(movieName: String): Source[Principal, _] = {
       Source.single(movieName)
         .via(titleByOriginalName)
-        .map(tb => tb.tconst)
-        .via(lookUpForTitlePrincipal)
         .async
-        .map(tp => tp.nconst)
-        .via(lookUpForPrincipals)
+        .via(titlePrincipals)
         .async
-        .map(toPrincipal)
+        .via(principals)
+
     }
 
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
       titleBasicSource
         .via(tvSeriesFlow)
-        .async
         .via(countAndFold)
-        .async
         .runWith(tvSeriesSortingSink))
       .mapConcat(seq => seq)
   }
@@ -177,7 +167,7 @@ object MovieService {
       val dispatch = builder.add(Balance[String](maxParallelPort))
       val mergePrincipals = builder.add(Merge[Principal](maxParallelPort))
       for (i <- 0 until maxParallelPort) {
-        dispatch.out(i) ~> titleByOriginalName.async ~> Flow[TitleBasic].map(tb => tb.tconst).async ~> lookUpForTitlePrincipal.async ~> Flow[TitlePrincipal].map(tp => tp.nconst).async ~> lookUpForPrincipals.async ~> Flow[NameBasic].map(toPrincipal) ~> mergePrincipals.in(i)
+        dispatch.out(i) ~> titleByOriginalName.async ~> titlePrincipals.async ~> principals.async ~> mergePrincipals.in(i)
       }
       FlowShape(dispatch.in, mergePrincipals.out)
     })

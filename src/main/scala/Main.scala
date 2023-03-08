@@ -23,12 +23,12 @@ object Main extends App {
   }
 
    private def runTvSeriesWithGreatestNumberOfEpisodes(): Unit = {
-    MovieServiceImpl1.tvSeriesWithGreatestNumberOfEpisodes()
+    MovieServiceImpl2.tvSeriesWithGreatestNumberOfEpisodes()
       .runForeach(println)
       .onComplete(_ => system.terminate())
   }
 
-   //runPrincipalsForMovieName();
-   runTvSeriesWithGreatestNumberOfEpisodes()
+   runPrincipalsForMovieName();
+   //runTvSeriesWithGreatestNumberOfEpisodes()
 
 }
