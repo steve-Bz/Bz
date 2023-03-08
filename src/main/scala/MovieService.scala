@@ -47,7 +47,7 @@ object MovieService {
 
   //Config val
 
-  private val maxParallelPort = 16
+  private val maxParallelPort = 10
 
 
   //From an upstream of title principals ids down stream name basic ids
@@ -76,11 +76,14 @@ object MovieService {
     Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
 
 
+  // From an upstream  of series count all the episodes of a given title
+  // downstream a pair of (number of episodes, title)
+  // representing the number of episodes for each title
   private val countAndFold: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
     val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
       (titleBasic: TitleBasic) => Flow[TitleEpisode]
         .filter(te => te.parentTconst == titleBasic.tconst)
-        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
+        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), s => None)
         .map(tbC => tbC._2)
         .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
           case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
@@ -89,28 +92,22 @@ object MovieService {
         .takeWhile(tb => tb.isDefined)
         .map(tp => tp.get)
         .log(name = "Counting episodes for each title")
-        .addAttributes(
-          Attributes.logLevels(
-            onElement = Attributes.LogLevels.Info,
-            onFinish = Attributes.LogLevels.Info,
-            onFailure = Attributes.LogLevels.Error))
+        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFinish = Attributes.LogLevels.Info, onFailure = Attributes.LogLevels.Error))
 
-    val countingDispatcher: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
-
-      val balanceTitles = builder.add(Balance[TitleBasic](maxParallelPort))
-
-      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](maxParallelPort))
-
-      for (i <- 0 until maxParallelPort) {
-        balanceTitles.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
+    Flow.fromGraph(GraphDSL.create() { implicit builder =>
+      val portsNumber = 10
+      val titleBalancer = builder.add(Balance[TitleBasic](portsNumber))
+      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](portsNumber))
+      for (i <- 0 until portsNumber) {
+        titleBalancer.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
       }
-      FlowShape(balanceTitles.in, mergePrincipals.out)
+
+      FlowShape(titleBalancer.in, mergePrincipals.out)
     })
-    countingDispatcher
   }
 
   val tvSeriesSortingSink: Sink[(Int, TitleBasic), Future[Seq[TvSerie]]] = Flow[(Int, TitleBasic)]
-    .toMat(Sink.seq[(Int, TitleBasic)])(Keep.right)
+    .toMat(Sink.takeLast[(Int, TitleBasic)](10))(Keep.right)
     .mapMaterializedValue(fs => fs
       .map(seq => seq
         .sortWith((l, r) => l._1 < r._1)
@@ -132,6 +129,7 @@ object MovieService {
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
       titleBasicSource
         .via(tvSeriesFlow)
+        .async
         .via(countAndFold)
         .runWith(tvSeriesSortingSink))
       .mapConcat(seq => seq)
