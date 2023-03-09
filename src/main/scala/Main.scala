@@ -1,6 +1,5 @@
 
-import Main.system.dispatcher
-import MovieService.{MovieServiceImpl1, MovieServiceImpl2}
+import MovieService.MovieServiceImpl
 import akka.actor.{Actor, ActorSystem, Props}
 
 
@@ -18,33 +17,37 @@ object Main extends App {
           s"""All principals in: $message
              |Hang on :) :)
              |""".stripMargin)
-        MovieServiceImpl2.principalsForMovieName(message)
+
+        MovieServiceImpl.principalsForMovieName(message)
           .runForeach(println)
-          .onComplete({
-            print("Tada !! Here are the principals i found ")
-            _ => system.terminate()
-          })
     }
   }
 
   private class SeriesActor extends Actor {
+
     override def receive: Receive = {
       case _: String =>
         println(
-          """|Hang tight this make take some time depends on data set but dont worry I log every thing i do to keep you awake :) :) :)
-            |""".stripMargin)
-        MovieServiceImpl1.tvSeriesWithGreatestNumberOfEpisodes().runForeach(println).onComplete(_ => {
-          print("Tada !! Here are the TV series i found ")
-          system.terminate()
-        })
+          """|Hang tight  :) :) :)
+             |""".stripMargin)
+        MovieServiceImpl.tvSeriesWithGreatestNumberOfEpisodes().runForeach(println)
     }
   }
 
-
-  def runner(): Unit = {
+  private def run(): Unit = {
+    println(
+      """
+        |Before runing this test make sure  this are in your main/resources directory:
+        |title.basics.tsv
+        |title.principals.tsv
+        |name.basics.tsv
+        |title.episode.tsv
+        |Are present in your resource file (main/resources) or specify they paths in class MovieService :)
+        |
+        |""".stripMargin)
 
     println(
-      """|->>  Tape: "principals" / "series"
+      """|->>  Tape: "principals" or "series"
          |>>>
          |""".stripMargin)
 
@@ -54,16 +57,19 @@ object Main extends App {
 
       message match {
         case "series" =>
+          println("Looking up for series... ")
           seriesActor ! "do it"
-          println(" Ok lets do it")
+
+
         case "principals" =>
-          println("""Movie Name:  (hint: you cane tape  "Blacksmith Scene" for example) """)
+          println("""Movie Name:  (hint: "Blacksmith Scene") """)
           val movieName = scala.io.StdIn.readLine()
           principalsActor ! movieName
-        case _ => runner()
+        case _ => run()
       }
 
     }
   }
-  runner()
+
+  run()
 }

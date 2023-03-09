@@ -7,17 +7,11 @@ import akka.stream._
 import akka.stream.scaladsl.GraphDSL.Implicits.port2flow
 import akka.stream.scaladsl.{Balance, Flow, GraphDSL, Keep, Merge, Sink, Source}
 
+import scala.annotation.unused
 import scala.concurrent.Future
 
 
 object MovieService {
-
-
-  private val titleBasicFile = "title.basics.tsv"
-  private val titlePrincipalFile = "title.principals.tsv"
-  private val nameBasicFile = "name.basics.tsv"
-  private val titleEpisodeFile = "title.episode.tsv"
-
 
   final case class Principal(name: String, birthYear: Int, deathYear: Option[Int] = None, profession: List[String] = Nil)
 
@@ -31,10 +25,6 @@ object MovieService {
 
   final case class NameBasic(nconst: String, primaryName: Option[String] = None, birthYear: Option[Int] = None, deathYear: Option[Int] = None, primaryProfession: List[String] = Nil)
 
-  private val titleBasicSource: Source[TitleBasic, Future[IOResult]] = tsvSourceMapper(titleBasicFile, toTitleBasic)
-  private val titlePrincipalSource: Source[TitlePrincipal, Future[IOResult]] = tsvSourceMapper(titlePrincipalFile, toTitlePrincipal)
-  private val nameBasicSource: Source[NameBasic, Future[IOResult]] = tsvSourceMapper(nameBasicFile, toNameBasic)
-  private val titleEpisodesSource: Source[TitleEpisode, Future[IOResult]] = tsvSourceMapper(titleEpisodeFile, toTitleEpisode)
 
   trait MovieService {
     def principalsForMovieName(movieName: String): Source[Principal, _]
@@ -43,77 +33,91 @@ object MovieService {
 
   }
 
-  //From an upstream of title principals ids down stream name basic ids
-  private val titlePrincipals: Flow[String, String, NotUsed] = {
-    Flow[String].flatMapConcat(tConst => titlePrincipalSource
-      .filter(tp => tp.tconst == tConst)
-      .map(tp => tp.nconst))
-  }
 
-  // From an upstream of original movie name downstream title ids
-  private val titleByOriginalName: Flow[String, String, NotUsed] = {
-    Flow[String].flatMapConcat(originalName => titleBasicSource
-      .filter(tb => tb.originalTitle.contains(originalName))
-      .map(tb => tb.tconst))
-  }
+  object MovieServiceImpl extends MovieService {
 
-  //For an upstream of name basic ids look up for principals
-  private val principals: Flow[String, Principal, NotUsed] = {
-    Flow[String].flatMapConcat(nConst => nameBasicSource
-      .filter(nb => nb.nconst == nConst)
-      .map(toPrincipal))
-  }
+    private val titleBasicFile = "title.basics.tsv"
+    private val titlePrincipalFile = "title.principals.tsv"
+    private val nameBasicFile = "name.basics.tsv"
+    private val titleEpisodeFile = "title.episode.tsv"
 
-  //  Filter the Titles in order to pick series only
-  private val tvSeriesFlow: Flow[TitleBasic, TitleBasic, NotUsed] =
-    Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
+    private val titleBasicSource: Source[TitleBasic, _] = tsvSourceMapper(titleBasicFile, toTitleBasic)
+    private val titlePrincipalSource: Source[TitlePrincipal, _] = tsvSourceMapper(titlePrincipalFile, toTitlePrincipal)
+    private val nameBasicSource: Source[NameBasic, _] = tsvSourceMapper(nameBasicFile, toNameBasic)
+    private val titleEpisodesSource: Source[TitleEpisode, _] = tsvSourceMapper(titleEpisodeFile, toTitleEpisode)
 
 
-  // From an upstream  of series count all the episodes of a given title
-  // downstream a pair of (number of episodes, title)
-  // representing the number of episodes for each title
-  private val countNumberOfEpisodes: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
-    val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
-      (titleBasic: TitleBasic) => Flow[TitleEpisode]
-        .filter(te => te.parentTconst == titleBasic.tconst)
-        .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
-        .map(tbC => tbC._2)
-        .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
-          case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
-          case None => Some(elem._1, elem._2)
-        })
-        .takeWhile(tb => tb.isDefined)
-        .map(tp => tp.get)
-        .log(name = "Counting episodes for each title")
-        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFinish = Attributes.LogLevels.Info, onFailure = Attributes.LogLevels.Error))
+    //From an upstream of title principals ids down stream name basic ids
+    private val titlePrincipals: Flow[String, String, NotUsed] = {
+      Flow[String].flatMapConcat(tConst => titlePrincipalSource
+        .filter(tp => tp.tconst == tConst)
+        .map(tp => tp.nconst))
+    }
 
-    Flow.fromGraph(GraphDSL.create() { implicit builder =>
-      val portsNumber = 10
-      val titleBalancer = builder.add(Balance[TitleBasic](portsNumber))
-      val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](portsNumber))
-      for (i <- 0 until portsNumber) {
-        titleBalancer.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
-      }
+    // From an upstream of original movie name downstream title ids
+    private val titleByOriginalName: Flow[String, String, NotUsed] = {
+      Flow[String]
+        .flatMapConcat(originalName => titleBasicSource
+          .filter(tb => tb.originalTitle.contains(originalName))
+          .map(tb => tb.tconst))
 
-      FlowShape(titleBalancer.in, mergePrincipals.out)
-    })
-  }
+    }
 
-  private val sortedTvSeries: Sink[(Int, TitleBasic), Future[List[TvSerie]]] = Flow[(Int, TitleBasic)]
-    .fold(List.empty[(Int, TitleBasic)])((acc, elem) =>
-      if (acc.length < 10)
-        elem :: acc.sortWith((l, r) => l._1 >= r._1).take(10)
-      else
-        acc)
+    //For an upstream of name basic ids look up for principals
+    private val principals: Flow[String, Principal, NotUsed] = {
+      Flow[String].flatMapConcat(nConst => nameBasicSource
+        .filter(nb => nb.nconst == nConst)
+        .map(toPrincipal))
+    }
 
-    .log(name = "Sorting titles..")
-    .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFinish = Attributes.LogLevels.Info, onFailure = Attributes.LogLevels.Error))
-    .toMat(Sink.last[List[(Int, TitleBasic)]])(Keep.right)
-    .mapMaterializedValue(fs => fs.map(seq => seq
-      .map(tb => toTvSerie(tb._2, tb._1))))
+    //  Filter the Titles in order to pick series only
+    private val tvSeriesFlow: Flow[TitleBasic, TitleBasic, NotUsed] =
+      Flow[TitleBasic].filter(tb => tb.titleType.contains("tvSeries"))
 
 
-  object MovieServiceImpl1 extends MovieService {
+    // From an upstream  of series count all the episodes of a given title
+    // downstream a pair of (number of episodes, title)
+    // representing the number of episodes for each title
+
+    private val countNumberOfEpisodes: Flow[TitleBasic, (Int, TitleBasic), NotUsed] = {
+      val titleEpisodeCountingFlow: TitleBasic => Flow[TitleEpisode, (Int, TitleBasic), NotUsed] =
+        (titleBasic: TitleBasic) => Flow[TitleEpisode]
+          .filter(te => te.parentTconst == titleBasic.tconst)
+          .statefulMap(() => (0, titleBasic))((counter, elem) => ((counter._1 + 1, counter._2), (elem, counter)), _ => None)
+          .map(tbC => tbC._2)
+          .fold(Option.empty[(Int, TitleBasic)])((acc, elem) => acc match {
+            case Some((n: Int, _: TitleBasic)) => Some((Integer.max(n, elem._1), elem._2))
+            case None => Some(elem._1, elem._2)
+          })
+          .filter(tb => tb.isDefined)
+          .map(tp => tp.get)
+          .log(name = "Counting episodes for each title")
+          .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info))
+
+      Flow.fromGraph(GraphDSL.create() { implicit builder =>
+        val portNumber = 10
+        val titleBalancer = builder.add(Balance[TitleBasic](portNumber))
+        val mergePrincipals = builder.add(Merge[(Int, TitleBasic)](portNumber))
+        for (i <- 0 until portNumber) {
+          titleBalancer.out(i) ~> Flow[TitleBasic].flatMapConcat(tb => titleEpisodesSource.via(titleEpisodeCountingFlow(tb))).async ~> mergePrincipals.in(i)
+        }
+
+        FlowShape(titleBalancer.in, mergePrincipals.out)
+      })
+    }
+
+    private val sortedTvSeries: Sink[(Int, TitleBasic), Future[List[TvSerie]]] = Flow[(Int, TitleBasic)]
+      .fold(List.empty[(Int, TitleBasic)])((acc, elem) => {
+        acc.length match {
+          case 0 => elem :: acc
+          case _ =>
+            (if (acc.last._1 > elem._1) acc else (elem :: acc).sortWith((l, r) => l._1 >= r._1)).take(10)
+        }
+      })
+      .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFinish = Attributes.LogLevels.Info, onFailure = Attributes.LogLevels.Error))
+      .toMat(Sink.last[List[(Int, TitleBasic)]])(Keep.right)
+      .mapMaterializedValue(fs => fs.map(seq => seq
+        .map(tb => toTvSerie(tb._2, tb._1))))
 
 
     override def principalsForMovieName(movieName: String): Source[Principal, _] = {
@@ -125,21 +129,20 @@ object MovieService {
         .via(principals)
     }
 
-    override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = Source.future(
-      titleBasicSource
-        .via(tvSeriesFlow)
-        //.take(10)   // if one wants to test a smaller data set
-        // ie(looking the greatest number of episodes on the first 100 series in the data set)
-        .async
-        .via(countNumberOfEpisodes)
-        .runWith(sortedTvSeries))
-      .mapConcat(seq => seq)
+    override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = {
+      println("The search Data have been intentionally limited to the first 100 series ")
+      Source.future(
+        titleBasicSource
+          .via(tvSeriesFlow)
+          .take(100)
+          .async
+          .via(countNumberOfEpisodes)
+          .runWith(sortedTvSeries))
+        .mapConcat(seq => seq)
+    }
 
-  }
-
-  //Playing with graphs experimental :)
-  object MovieServiceImpl2 extends MovieService {
-
+    //Experimental
+    //PLAYING with GRAPHS    :)
     // USING PIPELINING
     private val principalsForMovieGraph: Flow[String, Principal, NotUsed] = Flow.fromGraph(GraphDSL.create() { implicit builder =>
       val portNumber = 10
@@ -163,13 +166,13 @@ object MovieService {
       FlowShape(dispatch.in, mergePrincipals.out)
     })
 
-
-    override def principalsForMovieName(movieName: String): Source[Principal, _] =
+    @unused
+    def principalsForMovieNameWithGraph(movieName: String): Source[Principal, _] =
       Source.single(movieName)
         .via(principalsForMovieGraph)
 
-
-    override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = {
+    @unused
+    def tvSeriesWithGreatestNumberOfEpisodesWithGraph(): Source[TvSerie, _] = {
 
       Source.future(
         titleBasicSource

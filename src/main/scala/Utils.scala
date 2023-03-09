@@ -1,17 +1,18 @@
 import akka.NotUsed
-import akka.stream.IOResult
 import akka.stream.alpakka.csv.scaladsl.{CsvParsing, CsvToMap}
 import akka.stream.scaladsl.{FileIO, Flow, Source}
+import akka.stream.{ActorAttributes, Supervision}
 import akka.util.ByteString
 
 import java.nio.file.Paths
 import scala.collection.Map
-import scala.concurrent.Future
+import scala.util.{Failure, Success, Try}
 
 
 object Utils {
 
   object Conversions {
+
     import MovieService._
 
     import scala.language.implicitConversions
@@ -94,7 +95,7 @@ object Utils {
 
     def toPrincipal(nameBasic: NameBasic): Principal = Principal(nameBasic.primaryName.getOrElse("Not Specified"), nameBasic.birthYear.getOrElse(0), nameBasic.deathYear, nameBasic.primaryProfession)
 
-    def toTvSerie(titleBasic: TitleBasic,numberEpisodes: Int): TvSerie = TvSerie(titleBasic.originalTitle.getOrElse("Not Specified"), titleBasic.startYear.getOrElse(0), titleBasic.endYear, titleBasic.genres,numberEpisodes)
+    def toTvSerie(titleBasic: TitleBasic, numberEpisodes: Int): TvSerie = TvSerie(titleBasic.originalTitle.getOrElse("Not Specified"), titleBasic.startYear.getOrElse(0), titleBasic.endYear, titleBasic.genres, numberEpisodes)
   }
 
 
@@ -103,17 +104,42 @@ object Utils {
     private val lineParser: Flow[ByteString, List[ByteString], NotUsed] = CsvParsing.lineScanner(delimiter = CsvParsing.Tab, escapeChar = CsvParsing.DoubleQuote)
     private val csvToMap: Flow[List[ByteString], Map[String, String], NotUsed] = CsvToMap.toMapAsStrings()
 
-    def tsvSource(fileName: String): Source[Map[String, String], Future[IOResult]] =
-      FileIO.fromPath(Paths.get(fileName))
-        .via(lineParser)
-        .via(csvToMap)
 
-    def tsvSourceMapper[T](fileName: String, mapper: Map[String, String] => Option[T]): Source[T, Future[IOResult]] =
+    def tsvSource(fileName: String): Source[Map[String, String], _] = {
 
-      tsvSource( getClass.getResource(fileName).getFile)
+      //Treating error a function should never throw an exception
+      Try[String] {
+        getClass.getResource(fileName).getFile
+      } match {
+        case Success(value) =>
+          FileIO.fromPath(Paths.get(value))
+            .withAttributes(ActorAttributes.supervisionStrategy(_ => Supervision.Stop))
+            .via(lineParser)
+            .via(csvToMap)
+        case Failure(exception) =>
+          println(
+            s"""Error getting file name:$fileName
+               |Make sure  files:
+               |ressources/title.basics.tsv
+               |ressources/title.principals.tsv
+               |ressources/name.basics.tsv
+               |ressources/title.episode.tsv
+               |Are present in your resource file (main/resources) or specify they paths in class MovieService :)
+               |""".stripMargin)
+          Source.failed(exception)
+      }
+
+    }
+
+
+    def tsvSourceMapper[T](fileName: String, mapper: Map[String, String] => Option[T]): Source[T, _] =
+      tsvSource(fileName)
         .map(mapper)
         .filter(_.nonEmpty)
         .map(_.get)
-
+        .withAttributes(ActorAttributes.supervisionStrategy(_ => Supervision.Stop)) //  Stroping the stream on failure
   }
 }
+
+
+
