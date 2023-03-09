@@ -8,7 +8,5 @@ Le lancement du test suppose les fichiers dans le répertoire /main/ressources d
 - title.episodes.tsv
 - title.principals.tsv 
 
-
 Bonne réception
 
-Bonne Journée 

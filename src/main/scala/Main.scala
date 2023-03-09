@@ -48,6 +48,7 @@ object Main extends App {
 
     println(
       """|->>  Tape: "principals" or "series"
+         |->> or exit
          |>>>
          |""".stripMargin)
 
@@ -65,6 +66,10 @@ object Main extends App {
           println("""Movie Name:  (hint: "Blacksmith Scene") """)
           val movieName = scala.io.StdIn.readLine()
           principalsActor ! movieName
+
+        case "exit" =>
+          system.terminate()
+          sys.exit()
         case _ => run()
       }
     }
