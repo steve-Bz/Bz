@@ -3,6 +3,7 @@ import Main.system.dispatcher
 import Utils.Conversions.{toNameBasic, toPrincipal, toTitleBasic, toTitleEpisode, toTitlePrincipal, toTvSerie}
 import Utils.Operators.tsvSourceMapper
 import akka.NotUsed
+import akka.stream.Attributes.LogLevels
 import akka.stream._
 import akka.stream.scaladsl.GraphDSL.Implicits.port2flow
 import akka.stream.scaladsl.{Balance, Flow, GraphDSL, Keep, Merge, Sink, Source}
@@ -92,7 +93,7 @@ object MovieService {
           .filter(tb => tb.isDefined)
           .map(tp => tp.get)
           .log(name = "Counting episodes for each title")
-          .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info))
+          .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFailure = LogLevels.Error))
 
       Flow.fromGraph(GraphDSL.create() { implicit builder =>
         val portNumber = 10
@@ -127,6 +128,9 @@ object MovieService {
         .via(titlePrincipals)
         .async
         .via(principals)
+        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFailure = LogLevels.Error, onFinish = Attributes.LogLevels.Info))
+        .addAttributes(ActorAttributes.supervisionStrategy(_ => Supervision.Resume))
+
     }
 
     override def tvSeriesWithGreatestNumberOfEpisodes(): Source[TvSerie, _] = {
@@ -134,11 +138,13 @@ object MovieService {
       Source.future(
         titleBasicSource
           .via(tvSeriesFlow)
-          .take(100)
+          .take(100) // Intentionally set to 100 to limit data
           .async
           .via(countNumberOfEpisodes)
           .runWith(sortedTvSeries))
         .mapConcat(seq => seq)
+        .addAttributes(Attributes.logLevels(onElement = Attributes.LogLevels.Info, onFailure = LogLevels.Error, onFinish = Attributes.LogLevels.Info))
+        .addAttributes(ActorAttributes.supervisionStrategy(_ => Supervision.Resume))
     }
 
     //Experimental

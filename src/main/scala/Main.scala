@@ -67,7 +67,6 @@ object Main extends App {
           principalsActor ! movieName
         case _ => run()
       }
-
     }
   }
 
